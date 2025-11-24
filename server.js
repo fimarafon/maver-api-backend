@@ -1,6 +1,21 @@
 const express = require('express');
 const cors = require('cors');
 
+// --- Polyfill de fetch para Node 16/18/20 ---
+// Usa fetch nativo se existir; senão, carrega node-fetch dinamicamente.
+let fetchFn = global.fetch;
+if (!fetchFn) {
+  fetchFn = (...args) =>
+    import('node-fetch').then(({ default: fetch }) => fetch(...args));
+}
+const fetch = fetchFn;
+
+// AbortController em Node mais antigo (só por segurança)
+if (typeof AbortController === 'undefined') {
+  const { AbortController: AbortControllerPolyfill } = require('abort-controller');
+  global.AbortController = AbortControllerPolyfill;
+}
+
 const app = express();
 
 // CORS configuration - allow Vercel domain
@@ -49,9 +64,11 @@ function extractInternalLinks(html, baseUrl) {
     }
 
     const lowerHref = href.toLowerCase();
-    if (lowerHref.includes('practice') || lowerHref.includes('service') ||
+    if (
+      lowerHref.includes('practice') || lowerHref.includes('service') ||
       lowerHref.includes('area') || lowerHref.includes('attorney') ||
-      lowerHref.includes('lawyer') || lowerHref.includes('legal')) {
+      lowerHref.includes('lawyer') || lowerHref.includes('legal')
+    ) {
       links.add(href);
     }
   }
@@ -70,7 +87,10 @@ async function analyzePage(url) {
     });
 
     clearTimeout(timeoutId);
-    if (!response.ok) return null;
+    if (!response || !response.ok) {
+      console.warn('[analyzePage] Non-OK response for', url, response && response.status);
+      return null;
+    }
 
     const html = await response.text();
     const htmlLower = html.toLowerCase();
@@ -78,18 +98,18 @@ async function analyzePage(url) {
     const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
     const title = titleMatch ? titleMatch[1] : '';
 
-    const h1Regex = /<h1[^>]*>([^<]+)<\/h1>/gi;
+    const h1Regex = /<h1[^>]*>([\s\S]*?)<\/h1>/gi;
     const h1Tags = [];
     let h1Match;
     while ((h1Match = h1Regex.exec(html)) !== null) {
-      h1Tags.push(h1Match[1]);
+      h1Tags.push(extractText(h1Match[1]));
     }
 
-    const h2Regex = /<h2[^>]*>([^<]+)<\/h2>/gi;
+    const h2Regex = /<h2[^>]*>([\s\S]*?)<\/h2>/gi;
     const h2Tags = [];
     let h2Match;
     while ((h2Match = h2Regex.exec(html)) !== null) {
-      h2Tags.push(h2Match[1]);
+      h2Tags.push(extractText(h2Match[1]));
     }
 
     const text = extractText(html);
@@ -98,6 +118,7 @@ async function analyzePage(url) {
 
     return { url, title, wordCount, h1Tags, h2Tags, hasSchema };
   } catch (e) {
+    console.error('[analyzePage ERROR]', url, e.message || e);
     return null;
   }
 }
@@ -145,11 +166,16 @@ async function analyzeFirm(url, keywords, rating, reviews) {
 
   const homepage = await analyzePage(baseUrl);
   if (!homepage) {
+    console.warn('[analyzeFirm] Homepage analysis failed, returning minimal scores for', baseUrl);
     return { overallScore: 5, keywordScores: [], analysis: null };
   }
 
-  const homepageResponse = await fetch(baseUrl).catch(() => ({ text: () => '' }));
-  const homepageHtml = await homepageResponse.text();
+  const homepageResponse = await fetch(baseUrl).catch((e) => {
+    console.error('[analyzeFirm] fetch homepage HTML failed', baseUrl, e.message || e);
+    return null;
+  });
+
+  const homepageHtml = homepageResponse ? await homepageResponse.text() : '';
   const internalLinks = extractInternalLinks(homepageHtml, new URL(baseUrl).hostname);
 
   const pages = [homepage];
@@ -196,7 +222,10 @@ async function analyzeFirm(url, keywords, rating, reviews) {
     });
   }
 
-  const avgKeywordScore = keywordScores.reduce((sum, k) => sum + k.googleRankingEstimate, 0) / keywordScores.length;
+  const avgKeywordScore = keywordScores.length
+    ? keywordScores.reduce((sum, k) => sum + k.googleRankingEstimate, 0) / keywordScores.length
+    : 0;
+
   let overallScore = Math.round(avgKeywordScore * 0.6);
 
   if (!hasSchema) overallScore = Math.round(overallScore * 0.5);
@@ -240,10 +269,12 @@ app.post('/api/analyze', async (req, res) => {
     // === QUICK MODE ===
     if (isQuickMode) {
       const { googleTypes } = req.body;
+      console.log('[QUICK] Body.url:', url);
+      console.log('[QUICK] googleTypes:', googleTypes);
 
       // PRIORIDADE 1: Usar categories do Google Places se disponível
       if (googleTypes && googleTypes.length > 0) {
-        console.log('[QUICK] Using Google Places categories:', googleTypes);
+        console.log('[QUICK] Using Google Places categories for keyword extraction');
 
         // Transformar types do Google em keywords legíveis
         const keywordMap = {
@@ -272,10 +303,10 @@ app.post('/api/analyze', async (req, res) => {
 
           // Se já é uma categoria legal, adicionar
           if (typeLower.includes('lawyer') || typeLower.includes('attorney') || typeLower.includes('legal')) {
-            // Capitalizar e formatar
-            const formatted = typeLower.split(' ').map(w =>
-              w.charAt(0).toUpperCase() + w.slice(1)
-            ).join(' ').replace('_', ' ');
+            const formatted = typeLower
+              .split(' ')
+              .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+              .join(' ');
 
             extractedKeywords.add(formatted);
           }
@@ -293,7 +324,10 @@ app.post('/api/analyze', async (req, res) => {
           }
         }
 
-        if (extractedKeywords.size >= 3) {
+        console.log('[QUICK] extractedKeywords from googleTypes:', extractedKeywords);
+
+        // Antes exigia >= 3; isso quase nunca acontecia.
+        if (extractedKeywords.size > 0) {
           const suggestedKeywords = Array.from(extractedKeywords).slice(0, 10);
 
           // Detectar prática baseado nas keywords
@@ -325,9 +359,11 @@ app.post('/api/analyze', async (req, res) => {
       let baseUrl = url.startsWith('http') ? url : `https://${url}`;
       if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
 
+      console.log('[QUICK] Falling back to homepage analysis for', baseUrl);
       const homepage = await analyzePage(baseUrl);
 
       if (!homepage) {
+        console.warn('[QUICK] Homepage analysis failed, returning Personal Injury fallback keywords');
         return res.json({
           detectedPractice: 'Personal Injury',
           suggestedKeywords: PRACTICE_KEYWORDS['Personal Injury'],
@@ -360,24 +396,21 @@ app.post('/api/analyze', async (req, res) => {
       for (const heading of allHeadings) {
         const headingLower = heading.toLowerCase();
 
-        // Se o heading menciona algum termo legal, adiciona
         if (legalTerms.some(term => headingLower.includes(term))) {
-          // Limpar e formatar
           let cleaned = heading
             .replace(/\s+/g, ' ')
             .trim();
 
-          // Se não termina com Lawyer/Attorney, adicionar
           if (!cleaned.match(/lawyer|attorney/i)) {
-            if (cleaned.length < 50) { // Só adicionar se for curto
+            if (cleaned.length < 50) {
               cleaned += ' Lawyer';
             }
           }
 
-          // Capitalizar cada palavra
-          cleaned = cleaned.split(' ').map(w =>
-            w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
-          ).join(' ');
+          cleaned = cleaned
+            .split(' ')
+            .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+            .join(' ');
 
           if (cleaned.length > 10 && cleaned.length < 100) {
             extractedKeywords.add(cleaned);
@@ -387,7 +420,6 @@ app.post('/api/analyze', async (req, res) => {
 
       let suggestedKeywords = Array.from(extractedKeywords).slice(0, 10);
 
-      // Se encontrou menos de 5, completar com keywords da prática
       if (suggestedKeywords.length < 5) {
         const practiceKeywords = PRACTICE_KEYWORDS[detectedPractice] || PRACTICE_KEYWORDS['Personal Injury'];
         suggestedKeywords = [
@@ -423,7 +455,7 @@ app.post('/api/analyze', async (req, res) => {
       }
 
       const keywordsInTitles = firmAnalysis.keywordScores.filter(k => k.foundInTitle).length;
-      if (keywordsInTitles < keywords.length / 3) {
+      if (keywordsInTitles < (keywords ? keywords.length / 3 : 0)) {
         insights.push(`Apenas ${keywordsInTitles} de ${keywords.length} keywords aparecem em títulos de página.`);
       }
     }
