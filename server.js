@@ -10,12 +10,6 @@ if (!fetchFn) {
 }
 const fetch = fetchFn;
 
-// AbortController em Node mais antigo (só por segurança)
-if (typeof AbortController === 'undefined') {
-  const { AbortController: AbortControllerPolyfill } = require('abort-controller');
-  global.AbortController = AbortControllerPolyfill;
-}
-
 const app = express();
 
 // CORS configuration - allow Vercel domain
@@ -33,7 +27,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-// Helper functions
+// === HELPERS BÁSICOS ===
 function extractText(html) {
   return html
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
@@ -160,6 +154,7 @@ function scoreToLLMVisibility(score) {
   return { chatgpt: false, perplexity: false, gemini: false };
 }
 
+// === ANALISAR FIRMA (FULL MODE) ===
 async function analyzeFirm(url, keywords, rating, reviews) {
   let baseUrl = url.startsWith('http') ? url : `https://${url}`;
   if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
@@ -243,6 +238,7 @@ async function analyzeFirm(url, keywords, rating, reviews) {
   };
 }
 
+// === KEYWORDS DEFAULT (fallback) ===
 const PRACTICE_KEYWORDS = {
   "Personal Injury": [
     "Personal Injury Lawyer", "Car Accident Lawyer", "Truck Accident Lawyer",
@@ -251,12 +247,239 @@ const PRACTICE_KEYWORDS = {
   ]
 };
 
-// API Endpoint
+// === DETECTAR PRÁTICA A PARTIR DO TEXTO + GOOGLE TYPES ===
+const PRACTICE_PATTERNS = {
+  "Personal Injury": [
+    /personal injury/i,
+    /car accident|auto accident|motor vehicle/i,
+    /truck accident|trucking accident|18[- ]wheeler/i,
+    /slip and fall|trip and fall|premises liability/i,
+    /wrongful death/i,
+    /dog bite|animal attack/i,
+    /medical malpractice|birth injury/i
+  ],
+  "Criminal Defense": [
+    /criminal defense|criminal law/i,
+    /felony/i,
+    /misdemeanor/i,
+    /dui|dwi|driving under the influence/i,
+    /drug crime|drug offense|drug charges/i,
+    /domestic violence/i,
+    /traffic infraction|traffic violation|traffic ticket/i,
+    /theft|shoplifting|larceny/i,
+    /assault|battery/i
+  ],
+  "Family Law": [
+    /family law/i,
+    /divorce/i,
+    /child custody/i,
+    /child support/i,
+    /spousal support|alimony/i,
+    /paternity/i
+  ],
+  "Immigration": [
+    /immigration/i,
+    /green card/i,
+    /visa/i,
+    /citizenship/i,
+    /deportation/i,
+    /asylum/i
+  ],
+  "Estate Planning": [
+    /estate planning/i,
+    /wills? and trusts?/i,
+    /trusts?/i,
+    /probate/i,
+    /elder law/i,
+    /special needs trust/i
+  ],
+  "Business Litigation": [
+    /business litigation/i,
+    /commercial litigation/i,
+    /contract dispute/i,
+    /partnership dispute/i,
+    /shareholder dispute/i
+  ],
+  "Real Estate": [
+    /real estate law/i,
+    /landlord[- ]tenant/i,
+    /eviction/i,
+    /foreclosure/i
+  ],
+  "Employment Law": [
+    /employment law/i,
+    /wrongful termination/i,
+    /wage and hour/i,
+    /discrimination/i,
+    /harassment/i
+  ],
+  "Bankruptcy": [
+    /bankruptcy/i,
+    /chapter 7/i,
+    /chapter 13/i,
+    /debt relief/i
+  ]
+};
+
+function detectPracticeFromSignals(pageText, googleTypes = []) {
+  const typesText = (googleTypes || []).join(' ').toLowerCase();
+  const text = (pageText || '') + ' ' + typesText;
+
+  let bestPractice = 'Personal Injury';
+  let bestScore = 0;
+
+  for (const [practice, patterns] of Object.entries(PRACTICE_PATTERNS)) {
+    let score = 0;
+    for (const pattern of patterns) {
+      if (pattern.test(text)) score += 1;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestPractice = practice;
+    }
+  }
+
+  return bestPractice;
+}
+
+// === GERAR KEYWORDS POR PRÁTICA (tipo concorrente) ===
+function generateKeywordsFromPractice(practice, pageText, googleTypes = []) {
+  const text = (pageText || '') + ' ' + (googleTypes || []).join(' ').toLowerCase();
+  const kws = new Set();
+
+  const addRuleSet = (rules) => {
+    for (const rule of rules) {
+      if (rule.match.test(text)) {
+        rule.keywords.forEach(k => kws.add(k));
+      }
+    }
+  };
+
+  if (practice === 'Criminal Defense') {
+    addRuleSet([
+      {
+        match: /criminal defense|criminal law/i,
+        keywords: [
+          'Criminal Defense Lawyer',
+          'Felony Defense Attorney',
+          'Misdemeanor Defense Lawyer'
+        ]
+      },
+      {
+        match: /domestic violence/i,
+        keywords: ['Domestic Violence Lawyer']
+      },
+      {
+        match: /drug offense|drug crime|drug charges/i,
+        keywords: ['Drug Offense Lawyer']
+      },
+      {
+        match: /dui|dwi|driving under the influence|driving offenses?/i,
+        keywords: ['DUI Defense Attorney', 'Driving Under the Influence Lawyer']
+      },
+      {
+        match: /traffic infractions?|traffic violations?|traffic tickets?/i,
+        keywords: ['Traffic Violation Defense Attorney']
+      },
+      {
+        match: /theft|shoplifting|larceny/i,
+        keywords: ['Theft Defense Attorney']
+      },
+      {
+        match: /assault|battery/i,
+        keywords: ['Assault Defense Attorney']
+      }
+    ]);
+  } else if (practice === 'Personal Injury') {
+    addRuleSet([
+      {
+        match: /car accident|auto accident|motor vehicle/i,
+        keywords: ['Car Accident Lawyer', 'Auto Accident Attorney']
+      },
+      {
+        match: /truck accident|trucking accident|18[- ]wheeler/i,
+        keywords: ['Truck Accident Lawyer', 'Commercial Truck Accident Attorney']
+      },
+      {
+        match: /wrongful death/i,
+        keywords: ['Wrongful Death Lawyer']
+      },
+      {
+        match: /slip and fall|trip and fall|premises liability/i,
+        keywords: ['Slip and Fall Lawyer', 'Premises Liability Lawyer']
+      },
+      {
+        match: /dog bite|animal attack/i,
+        keywords: ['Dog Bite Lawyer']
+      },
+      {
+        match: /medical malpractice|birth injury/i,
+        keywords: ['Medical Malpractice Lawyer']
+      },
+      {
+        match: /product liability|defective product/i,
+        keywords: ['Product Liability Lawyer']
+      }
+    ]);
+  } else if (practice === 'Family Law') {
+    addRuleSet([
+      { match: /divorce/i, keywords: ['Divorce Attorney'] },
+      { match: /child custody/i, keywords: ['Child Custody Lawyer'] },
+      { match: /child support/i, keywords: ['Child Support Attorney'] },
+      { match: /spousal support|alimony/i, keywords: ['Spousal Support Lawyer'] },
+      { match: /prenup|prenuptial/i, keywords: ['Prenuptial Agreement Lawyer'] }
+    ]);
+  } else if (practice === 'Immigration') {
+    addRuleSet([
+      { match: /green card/i, keywords: ['Green Card Lawyer'] },
+      { match: /visa/i, keywords: ['Visa Lawyer'] },
+      { match: /citizenship/i, keywords: ['Citizenship Attorney'] },
+      { match: /deportation|removal defense/i, keywords: ['Deportation Defense Lawyer'] }
+    ]);
+  } else if (practice === 'Estate Planning') {
+    addRuleSet([
+      { match: /estate planning/i, keywords: ['Estate Planning Lawyer'] },
+      { match: /wills? and trusts?|trusts?/i, keywords: ['Wills and Trusts Attorney'] },
+      { match: /special needs trust/i, keywords: ['Special Needs Trusts Attorney'] },
+      { match: /elder law/i, keywords: ['Elder Law Attorney'] },
+      { match: /living will/i, keywords: ['Living Wills Lawyer'] }
+    ]);
+  } else if (practice === 'Business Litigation') {
+    addRuleSet([
+      { match: /business litigation|commercial litigation/i, keywords: ['Business Litigation Attorney'] },
+      { match: /contract dispute/i, keywords: ['Contract Dispute Lawyer'] },
+      { match: /partnership dispute/i, keywords: ['Partnership Dispute Attorney'] }
+    ]);
+  } else if (practice === 'Real Estate') {
+    addRuleSet([
+      { match: /real estate law/i, keywords: ['Real Estate Lawyer'] },
+      { match: /landlord[- ]tenant/i, keywords: ['Landlord Tenant Attorney'] },
+      { match: /eviction/i, keywords: ['Eviction Defense Lawyer'] }
+    ]);
+  } else if (practice === 'Employment Law') {
+    addRuleSet([
+      { match: /wrongful termination/i, keywords: ['Wrongful Termination Lawyer'] },
+      { match: /wage and hour/i, keywords: ['Wage and Hour Attorney'] },
+      { match: /discrimination/i, keywords: ['Employment Discrimination Lawyer'] },
+      { match: /harassment/i, keywords: ['Workplace Harassment Attorney'] }
+    ]);
+  } else if (practice === 'Bankruptcy') {
+    addRuleSet([
+      { match: /chapter 7/i, keywords: ['Chapter 7 Bankruptcy Attorney'] },
+      { match: /chapter 13/i, keywords: ['Chapter 13 Bankruptcy Attorney'] },
+      { match: /debt relief/i, keywords: ['Debt Relief Lawyer'] }
+    ]);
+  }
+
+  return Array.from(kws);
+}
+
+// === API ENDPOINT ===
 app.post('/api/analyze', async (req, res) => {
   const startTime = Date.now();
 
   try {
-    const { url, firmName, city, keywords, rating, reviews, mode, competitors } = req.body;
+    const { url, firmName, city, keywords, rating, reviews, mode, competitors, googleTypes } = req.body;
 
     if (!url || !firmName) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -268,171 +491,73 @@ app.post('/api/analyze', async (req, res) => {
 
     // === QUICK MODE ===
     if (isQuickMode) {
-      const { googleTypes } = req.body;
       console.log('[QUICK] Body.url:', url);
       console.log('[QUICK] googleTypes:', googleTypes);
 
-      // PRIORIDADE 1: Usar categories do Google Places se disponível
-      if (googleTypes && googleTypes.length > 0) {
-        console.log('[QUICK] Using Google Places categories for keyword extraction');
-
-        // Transformar types do Google em keywords legíveis
-        const keywordMap = {
-          'lawyer': 'Lawyer',
-          'attorney': 'Attorney',
-          'legal': 'Legal Services',
-          'estate_planning': 'Estate Planning',
-          'elder_law': 'Elder Law',
-          'family_law': 'Family Law',
-          'divorce': 'Divorce',
-          'criminal': 'Criminal Defense',
-          'dui': 'DUI Defense',
-          'immigration': 'Immigration',
-          'personal_injury': 'Personal Injury',
-          'accident': 'Accident',
-          'medical_malpractice': 'Medical Malpractice',
-          'business_law': 'Business Law',
-          'real_estate': 'Real Estate Law'
-        };
-
-        const extractedKeywords = new Set();
-
-        // Processar cada type do Google
-        for (const type of googleTypes) {
-          const typeLower = type.toLowerCase().replace(/_/g, ' ');
-
-          // Se já é uma categoria legal, adicionar
-          if (typeLower.includes('lawyer') || typeLower.includes('attorney') || typeLower.includes('legal')) {
-            const formatted = typeLower
-              .split(' ')
-              .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-              .join(' ');
-
-            extractedKeywords.add(formatted);
-          }
-
-          // Mapear types conhecidos
-          for (const [key, value] of Object.entries(keywordMap)) {
-            if (typeLower.includes(key)) {
-              if (!value.includes('Lawyer') && !value.includes('Attorney')) {
-                extractedKeywords.add(value + ' Lawyer');
-                extractedKeywords.add(value + ' Attorney');
-              } else {
-                extractedKeywords.add(value);
-              }
-            }
-          }
-        }
-
-        console.log('[QUICK] extractedKeywords from googleTypes:', extractedKeywords);
-
-        // Antes exigia >= 3; isso quase nunca acontecia.
-        if (extractedKeywords.size > 0) {
-          const suggestedKeywords = Array.from(extractedKeywords).slice(0, 10);
-
-          // Detectar prática baseado nas keywords
-          const keywordsText = suggestedKeywords.join(' ').toLowerCase();
-          let detectedPractice = 'Personal Injury';
-          if (keywordsText.includes('estate') || keywordsText.includes('elder')) {
-            detectedPractice = 'Estate Planning';
-          } else if (keywordsText.includes('family') || keywordsText.includes('divorce')) {
-            detectedPractice = 'Family Law';
-          } else if (keywordsText.includes('criminal') || keywordsText.includes('dui')) {
-            detectedPractice = 'Criminal Defense';
-          } else if (keywordsText.includes('immigration')) {
-            detectedPractice = 'Immigration';
-          } else if (keywordsText.includes('business')) {
-            detectedPractice = 'Business Law';
-          }
-
-          return res.json({
-            detectedPractice,
-            suggestedKeywords,
-            quickAnalysis: true,
-            hasSchema: true,
-            processingTime: Math.round((Date.now() - startTime) / 1000)
-          });
-        }
-      }
-
-      // FALLBACK: Analisar o website se Google types não der resultado
       let baseUrl = url.startsWith('http') ? url : `https://${url}`;
       if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
 
-      console.log('[QUICK] Falling back to homepage analysis for', baseUrl);
+      console.log('[QUICK] Analyzing homepage:', baseUrl);
       const homepage = await analyzePage(baseUrl);
 
-      if (!homepage) {
-        console.warn('[QUICK] Homepage analysis failed, returning Personal Injury fallback keywords');
-        return res.json({
-          detectedPractice: 'Personal Injury',
-          suggestedKeywords: PRACTICE_KEYWORDS['Personal Injury'],
-          quickAnalysis: true,
-          hasSchema: false,
-          processingTime: Math.round((Date.now() - startTime) / 1000)
-        });
+      // Construir texto base
+      const textParts = [];
+      if (homepage) {
+        textParts.push(homepage.title);
+        textParts.push(...homepage.h1Tags);
+        textParts.push(...homepage.h2Tags);
       }
+      const pageText = textParts.join(' ').toLowerCase();
 
-      // Detectar prática E extrair keywords REAIS do site
-      const pageText = `${homepage.title} ${homepage.h1Tags.join(' ')} ${homepage.h2Tags.join(' ')}`.toLowerCase();
+      // 1) Detectar prática global
+      const detectedPractice = detectPracticeFromSignals(pageText, googleTypes);
 
-      let detectedPractice = 'Personal Injury';
-      if (pageText.includes('divorce') || pageText.includes('custody') || pageText.includes('family law')) {
-        detectedPractice = 'Family Law';
-      } else if (pageText.includes('criminal') || pageText.includes('dui') || pageText.includes('defense')) {
-        detectedPractice = 'Criminal Defense';
-      } else if (pageText.includes('immigration') || pageText.includes('visa')) {
-        detectedPractice = 'Immigration';
-      } else if (pageText.includes('business') || pageText.includes('corporate') || pageText.includes('contract')) {
-        detectedPractice = 'Business Litigation';
-      }
+      // 2) Gerar keywords específicas por prática
+      const practiceKeywords = generateKeywordsFromPractice(detectedPractice, pageText, googleTypes);
 
-      // EXTRAIR keywords REAIS do site (H1s e H2s que mencionam serviços)
-      const allHeadings = [...homepage.h1Tags, ...homepage.h2Tags];
-      const extractedKeywords = new Set();
+      // 3) Adicionar headings que já têm termos legais
+      const headingKeywords = new Set();
+      if (homepage) {
+        const legalTerms = ['lawyer', 'attorney', 'law', 'legal'];
+        for (const heading of [...homepage.h1Tags, ...homepage.h2Tags]) {
+          const headingLower = heading.toLowerCase();
+          if (!legalTerms.some(t => headingLower.includes(t))) continue;
 
-      const legalTerms = ['lawyer', 'attorney', 'law', 'legal'];
-
-      for (const heading of allHeadings) {
-        const headingLower = heading.toLowerCase();
-
-        if (legalTerms.some(term => headingLower.includes(term))) {
-          let cleaned = heading
-            .replace(/\s+/g, ' ')
-            .trim();
-
-          if (!cleaned.match(/lawyer|attorney/i)) {
-            if (cleaned.length < 50) {
-              cleaned += ' Lawyer';
-            }
+          let cleaned = heading.replace(/\s+/g, ' ').trim();
+          if (!/lawyer|attorney/i.test(cleaned) && cleaned.length < 80) {
+            cleaned += ' Lawyer';
           }
-
           cleaned = cleaned
             .split(' ')
             .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
             .join(' ');
 
           if (cleaned.length > 10 && cleaned.length < 100) {
-            extractedKeywords.add(cleaned);
+            headingKeywords.add(cleaned);
           }
         }
       }
 
-      let suggestedKeywords = Array.from(extractedKeywords).slice(0, 10);
+      const extractedKeywords = new Set([
+        ...practiceKeywords,
+        ...headingKeywords
+      ]);
 
-      if (suggestedKeywords.length < 5) {
-        const practiceKeywords = PRACTICE_KEYWORDS[detectedPractice] || PRACTICE_KEYWORDS['Personal Injury'];
-        suggestedKeywords = [
-          ...suggestedKeywords,
-          ...practiceKeywords.filter(k => !suggestedKeywords.includes(k))
-        ].slice(0, 10);
+      // 4) Fallback se ainda não achou nada
+      if (extractedKeywords.size === 0) {
+        console.warn('[QUICK] No specific keywords found, using generic practice list');
+        const fallback =
+          PRACTICE_KEYWORDS[detectedPractice] || PRACTICE_KEYWORDS['Personal Injury'];
+        fallback.forEach(k => extractedKeywords.add(k));
       }
+
+      const finalKeywords = Array.from(extractedKeywords).slice(0, 10);
 
       return res.json({
         detectedPractice,
-        suggestedKeywords,
+        suggestedKeywords: finalKeywords,
         quickAnalysis: true,
-        hasSchema: homepage.hasSchema,
+        hasSchema: homepage ? homepage.hasSchema : false,
         processingTime: Math.round((Date.now() - startTime) / 1000)
       });
     }
@@ -509,7 +634,7 @@ app.post('/api/analyze', async (req, res) => {
     }
 
     const response = {
-      detectedPractice: 'Personal Injury',
+      detectedPractice: 'Personal Injury', // se quiser podemos melhorar depois e usar detectPracticeFromSignals aqui também
       suggestedKeywords: keywords,
       keywordScores: firmAnalysis.keywordScores,
       overallScore: firmAnalysis.overallScore,
