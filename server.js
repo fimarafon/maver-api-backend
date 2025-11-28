@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { summarizeFirmAnalysis } = require('./llmClient');
+const { summarizeFirmAnalysis, extractKeywordsWithGemini } = require('./llmClient');
 
 const app = express();
 
@@ -583,34 +583,43 @@ app.post('/api/analyze', async (req, res) => {
       let normalizedUrl = url.startsWith('http') ? url : `https://${url}`;
       if (normalizedUrl.endsWith('/')) normalizedUrl = normalizedUrl.slice(0, -1);
 
-      let homepageHtml = '';
-      let homepageHasSchema = false;
-      let htmlLower = '';
+      console.log(`[QUICK] Using Gemini to research ${firmName}...`);
 
-      try {
-        const page = await analyzePage(normalizedUrl);
-        if (page) {
-          homepageHtml = page.html || '';
-          homepageHasSchema = page.hasSchema || false;
-          htmlLower = page.htmlLower || '';
-        }
-      } catch (e) {
-        console.error('[QUICK] Error fetching homepage:', e);
+      // ✅ NOVA ABORDAGEM: Usar Gemini com Google Search (igual AI Studio)
+      const geminiResult = await extractKeywordsWithGemini(
+        firmName,
+        normalizedUrl,
+        city,
+        'CA', // ou extrair do endereço se disponível
+        googleTypes || []
+      );
+
+      let detectedPractice = 'Personal Injury';
+      let suggestedKeywords = [];
+
+      if (geminiResult && geminiResult.practiceArea && geminiResult.keywords) {
+        // ✅ Sucesso! Usar dados do Gemini
+        detectedPractice = geminiResult.practiceArea;
+        suggestedKeywords = geminiResult.keywords.slice(0, 10);
+        console.log(`[QUICK] ✅ Gemini found: ${detectedPractice}, ${suggestedKeywords.length} keywords`);
+      } else {
+        // ❌ Fallback: Tentar detectar pela descrição do Google
+        console.log('[QUICK] ⚠️  Gemini failed, using fallback detection');
+        const googleTypesStr = (googleTypes || []).join(' ').toLowerCase();
+
+        if (googleTypesStr.includes('estate')) detectedPractice = 'Estate Planning';
+        else if (googleTypesStr.includes('criminal')) detectedPractice = 'Criminal Defense';
+        else if (googleTypesStr.includes('family')) detectedPractice = 'Family Law';
+        else if (googleTypesStr.includes('immigration')) detectedPractice = 'Immigration';
+
+        suggestedKeywords = (PRACTICE_KEYWORDS[detectedPractice] || PRACTICE_KEYWORDS['Personal Injury']).slice(0, 10);
       }
-
-      // Detectar prática usando HTML + Google types
-      const detectedPractice = detectPractice(googleTypes || [], htmlLower);
-      const suggestedKeywords = homepageHtml
-        ? extractKeywordsFromHtml(homepageHtml, detectedPractice)
-        : (PRACTICE_KEYWORDS[detectedPractice] || PRACTICE_KEYWORDS['Personal Injury']).slice(0, 10);
-
-      console.log('[QUICK] Extracted keywords:', suggestedKeywords);
 
       return res.json({
         detectedPractice,
         suggestedKeywords,
         quickAnalysis: true,
-        hasSchema: homepageHasSchema,
+        hasSchema: false, // não checamos mais schema no quick mode
         processingTime: Math.round((Date.now() - startTime) / 1000)
       });
     }
