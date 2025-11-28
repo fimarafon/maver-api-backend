@@ -147,6 +147,52 @@ const PRACTICE_KEYWORDS = {
   ]
 };
 
+// ========================================
+// WHITELIST DE TERMOS JURÍDICOS VÁLIDOS
+// ========================================
+const LEGAL_TERMS = [
+  // Personal Injury
+  'personal injury', 'car accident', 'auto accident', 'truck accident', 'motorcycle accident',
+  'wrongful death', 'catastrophic injury', 'brain injury', 'spinal cord', 'slip and fall',
+  'premises liability', 'product liability', 'medical malpractice', 'nursing home abuse',
+  'dog bite', 'bicycle accident', 'pedestrian accident', 'uber accident', 'lyft accident',
+
+  // Criminal Defense
+  'criminal defense', 'dui', 'dwi', 'drug crime', 'domestic violence', 'assault', 'battery',
+  'theft', 'robbery', 'burglary', 'felony', 'misdemeanor', 'expungement', 'record sealing',
+
+  // Family Law
+  'divorce', 'child custody', 'child support', 'spousal support', 'alimony', 'separation',
+  'prenuptial', 'postnuptial', 'adoption', 'paternity', 'guardianship',
+
+  // Estate Planning
+  'estate planning', 'wills', 'trusts', 'probate', 'trust administration', 'elder law',
+  'medicaid planning', 'asset protection', 'power of attorney', 'living will',
+  'special needs trust', 'conservatorship',
+
+  // Immigration
+  'immigration', 'visa', 'green card', 'citizenship', 'naturalization', 'deportation',
+  'asylum', 'refugee', 'work permit', 'fiancé visa',
+
+  // Business/Employment
+  'business litigation', 'contract dispute', 'employment law', 'wrongful termination',
+  'discrimination', 'harassment', 'wage dispute', 'whistleblower', 'severance',
+  'commercial litigation', 'partnership dispute', 'shareholder dispute',
+
+  // Real Estate
+  'real estate', 'landlord tenant', 'eviction', 'property dispute', 'foreclosure',
+  'title dispute', 'boundary dispute', 'easement',
+
+  // Bankruptcy
+  'bankruptcy', 'chapter 7', 'chapter 13', 'chapter 11', 'debt relief', 'foreclosure defense',
+
+  // Other
+  'civil rights', 'police brutality', 'construction accident', 'workers compensation',
+  'social security disability', 'veterans benefits', 'toxic tort', 'mass tort',
+  'class action', 'securities fraud', 'insurance bad faith', 'fire litigation',
+  'wildfire litigation', 'data breach', 'cyber liability'
+];
+
 // Detectar prática pela combinação de Google types + conteúdo do site
 function detectPractice(googleTypes = [], htmlLower = '') {
   const text = htmlLower || '';
@@ -185,7 +231,9 @@ function detectPractice(googleTypes = [], htmlLower = '') {
   return 'Personal Injury';
 }
 
-// Extrair keywords reais do HTML (menu, practice areas, etc.)
+// ========================================
+// EXTRAÇÃO INTELIGENTE DE KEYWORDS
+// ========================================
 function extractKeywordsFromHtml(html, practice = 'Personal Injury') {
   if (!html) return [];
 
@@ -219,11 +267,15 @@ function extractKeywordsFromHtml(html, practice = 'Personal Injury') {
     text = text.replace(/\s+/g, ' ').trim();
     if (!text) continue;
 
-    // filtros básicos
     const lower = text.toLowerCase();
+
+    // ✅ NOVO: Só adiciona se contiver termo jurídico válido
+    const hasLegalTerm = LEGAL_TERMS.some(term => lower.includes(term));
+    if (!hasLegalTerm) continue;
+
+    // Filtros de rejeição
     if (lower.length < 3 || lower.length > 80) continue;
-    if (/(home|about|contact|blog|faq|team|location|locations|directions)/i.test(lower)) continue;
-    if (!/[a-z]/i.test(text)) continue;
+    if (/(home|about|contact|blog|faq|team|location|locations|directions|overview|firm overview|breaking news|news|media center|charitable|honors|awards|case results|testimonials|privacy policy|site map|disclaimer)/i.test(lower)) continue;
 
     rawKeywords.add(text);
   }
@@ -237,8 +289,13 @@ function extractKeywordsFromHtml(html, practice = 'Personal Injury') {
     if (!text) continue;
 
     const lower = text.toLowerCase();
+
+    // ✅ NOVO: Só adiciona se contiver termo jurídico válido
+    const hasLegalTerm = LEGAL_TERMS.some(term => lower.includes(term));
+    if (!hasLegalTerm) continue;
+
     if (lower.length < 3 || lower.length > 80) continue;
-    if (/(results|why choose us|our team|testimonials)/i.test(lower)) continue;
+    if (/(results|why choose us|our team|testimonials|overview|news|media|awards)/i.test(lower)) continue;
 
     rawKeywords.add(text);
   }
@@ -249,30 +306,29 @@ function extractKeywordsFromHtml(html, practice = 'Personal Injury') {
   for (const raw of rawKeywords) {
     let kw = raw;
 
-    // tirar "Law Firm / Law Group" do final se atrapalhar
-    kw = kw.replace(/\b(law firm|law group|attorneys at law)\b/gi, '').trim();
+    // Limpar sufixos desnecessários
+    kw = kw.replace(/\b(law firm|law group|attorneys at law|aplc|pc|llp|llc)\b/gi, '').trim();
     if (!kw) continue;
 
     const lower = kw.toLowerCase();
 
-    // se já parece ser keyword de serviço, só padroniza
+    // Se já tem lawyer/attorney, mantém
     let needsSuffix = !/(lawyer|attorney|counsel|law\b)/i.test(kw);
 
-    // se tiver termos bem jurídicos específicos, adiciona "Lawyer" ou "Attorney"
+    // Adicionar sufixo apropriado baseado no tipo de serviço
     if (needsSuffix) {
       if (/(planning|trust|probate|guardianship|conservatorship|benefits|medicaid|wills|long-term care)/i.test(lower)) {
         kw = kw + ' Attorney';
-      } else if (/(injury|accident|defense|litigation|liability|malpractice|abuse)/i.test(lower)) {
+      } else if (/(injury|accident|defense|litigation|liability|malpractice|abuse|dispute)/i.test(lower)) {
         kw = kw + ' Lawyer';
       } else {
-        // genérico mas relacionado – prefere Lawyer
         kw = kw + ' Lawyer';
       }
     }
 
     kw = toTitleCase(kw);
 
-    // regras finais de filtro
+    // Regras finais de validação
     const kwLower = kw.toLowerCase();
     if (kwLower.length < 10 || kwLower.length > 80) continue;
     if (!/(law|lawyer|attorney)/i.test(kw)) continue;
@@ -282,7 +338,12 @@ function extractKeywordsFromHtml(html, practice = 'Personal Injury') {
 
   const extracted = Array.from(finalSet);
 
-  // completar com keywords da prática, se estiver pobre
+  // Se encontrou keywords válidas, retorna elas
+  if (extracted.length >= 5) {
+    return extracted.slice(0, 10);
+  }
+
+  // Se encontrou poucas, completa com keywords da prática
   const base = PRACTICE_KEYWORDS[practice] || PRACTICE_KEYWORDS['Personal Injury'];
   const merged = [...extracted];
 
@@ -291,7 +352,7 @@ function extractKeywordsFromHtml(html, practice = 'Personal Injury') {
     if (!merged.includes(k)) merged.push(k);
   }
 
-  // Se por algum motivo não achou nada, devolve só o fallback
+  // Se não achou nada, devolve só o fallback
   if (!merged.length) return base.slice(0, 10);
 
   return merged.slice(0, 10);
@@ -318,92 +379,98 @@ async function analyzePage(url) {
     const htmlLower = html.toLowerCase();
 
     const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-    const title = titleMatch ? titleMatch[1] : '';
+    const title = titleMatch ? decodeEntities(titleMatch[1]) : '';
 
-    const h1Regex = /<h1[^>]*>([\s\S]*?)<\/h1>/gi;
     const h1Tags = [];
+    const h1Regex = /<h1[^>]*>([\s\S]*?)<\/h1>/gi;
     let h1Match;
     while ((h1Match = h1Regex.exec(html)) !== null) {
       h1Tags.push(decodeEntities(extractText(h1Match[1])));
     }
 
-    const h2Regex = /<h2[^>]*>([\s\S]*?)<\/h2>/gi;
     const h2Tags = [];
+    const h2Regex = /<h2[^>]*>([\s\S]*?)<\/h2>/gi;
     let h2Match;
     while ((h2Match = h2Regex.exec(html)) !== null) {
       h2Tags.push(decodeEntities(extractText(h2Match[1])));
     }
 
-    const text = extractText(html);
-    const wordCount = countWords(text);
-    const hasSchema = htmlLower.includes('schema.org') || htmlLower.includes('"@type"');
+    const bodyText = extractText(html);
+    const wordCount = countWords(bodyText);
 
-    return { url, title, wordCount, h1Tags, h2Tags, hasSchema, html, htmlLower };
-  } catch (e) {
+    const hasSchema = /application\/ld\+json/i.test(html) &&
+      /(LocalBusiness|Attorney|LegalService|Organization)/i.test(html);
+
+    return {
+      url,
+      html,
+      htmlLower,
+      title,
+      h1Tags,
+      h2Tags,
+      wordCount,
+      hasSchema
+    };
+  } catch (err) {
+    console.error(`[analyzePage] Error for ${url}:`, err.message);
     return null;
   }
 }
 
 function extractInternalLinks(html, baseHost) {
-  const linkRegex = /<a[^>]*href=["']([^"']+)["'][^>]*>/gi;
   const links = new Set();
+  const linkRegex = /<a[^>]+href=["']([^"']+)["']/gi;
   let match;
 
   while ((match = linkRegex.exec(html)) !== null) {
     let href = match[1];
-    if (!href) continue;
-    if (href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) continue;
+    if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) continue;
 
-    // manter apenas links internos
-    if (href.startsWith('http')) {
-      try {
-        const u = new URL(href);
-        if (u.hostname !== baseHost) continue;
-      } catch { continue; }
-    }
-
-    // normalizar
-    if (href.startsWith('/')) {
-      href = `https://${baseHost}${href}`;
-    } else if (!href.startsWith('http')) {
-      href = `https://${baseHost}/${href}`;
-    }
-
-    const lowerHref = href.toLowerCase();
-    if (lowerHref.includes('practice') || lowerHref.includes('service') ||
-      lowerHref.includes('area') || lowerHref.includes('attorney') ||
-      lowerHref.includes('lawyer') || lowerHref.includes('legal')) {
-      links.add(href);
+    try {
+      const fullUrl = href.startsWith('http') ? href : `https://${baseHost}${href.startsWith('/') ? '' : '/'}${href}`;
+      const urlObj = new URL(fullUrl);
+      if (urlObj.hostname === baseHost && !urlObj.pathname.match(/\.(pdf|jpg|png|gif|zip)$/i)) {
+        links.add(fullUrl);
+      }
+    } catch (e) {
+      // ignore invalid URLs
     }
   }
 
-  return Array.from(links).slice(0, 5);
+  return Array.from(links);
 }
 
 function estimateGoogleRanking(keyword, pages, rating, reviews) {
-  const cleanKw = keyword.toLowerCase().replace(' lawyer', '').replace(' attorney', '').trim();
   let score = 0;
 
-  const inTitle = pages.some(p => (p.title || '').toLowerCase().includes(cleanKw));
-  if (inTitle) score += 35;
+  const cleanKw = keyword.toLowerCase().replace(' lawyer', '').replace(' attorney', '').trim();
 
-  const dedicatedPage = pages.find(p => {
-    const urlMatch = (p.url || '').toLowerCase().includes(cleanKw);
+  const foundInTitle = pages.some(p => (p.title || '').toLowerCase().includes(cleanKw));
+  if (foundInTitle) score += 20;
+
+  const hasDedicatedPage = pages.some(p => {
+    const urlMatch = (p.url || '').toLowerCase().includes(cleanKw.replace(/\s+/g, '-'));
     const h1Match = (p.h1Tags || []).some(h1 => (h1 || '').toLowerCase().includes(cleanKw));
-    return urlMatch && h1Match && p.wordCount > 500;
+    return urlMatch && h1Match;
   });
-  if (dedicatedPage) {
-    score += 30;
-    if (dedicatedPage.wordCount > 1500) score += 10;
-    else if (dedicatedPage.wordCount > 1000) score += 5;
-  }
+  if (hasDedicatedPage) score += 25;
 
-  if (pages.some(p => p.hasSchema)) score += 20;
-  else score = Math.round(score * 0.4);
+  let totalMentions = 0;
+  pages.forEach(p => {
+    const pageText = `${p.title} ${(p.h1Tags || []).join(' ')} ${(p.h2Tags || []).join(' ')}`.toLowerCase();
+    const matches = (pageText.match(new RegExp(cleanKw, 'g')) || []).length;
+    totalMentions += matches;
+  });
 
-  if (rating >= 4.8 && reviews >= 150) score += 15;
-  else if (rating >= 4.5 && reviews >= 100) score += 12;
-  else if (rating >= 4.5 && reviews >= 50) score += 8;
+  if (totalMentions >= 10) score += 15;
+  else if (totalMentions >= 5) score += 10;
+  else if (totalMentions >= 2) score += 5;
+
+  const hasSchema = pages.some(p => p.hasSchema);
+  if (hasSchema) score += 15;
+
+  if (rating >= 4.8 && reviews >= 100) score += 10;
+  else if (rating >= 4.5 && reviews >= 50) score += 7;
   else if (rating >= 4.0 && reviews >= 20) score += 4;
 
   return Math.min(score, 100);
@@ -537,6 +604,8 @@ app.post('/api/analyze', async (req, res) => {
         ? extractKeywordsFromHtml(homepageHtml, detectedPractice)
         : (PRACTICE_KEYWORDS[detectedPractice] || PRACTICE_KEYWORDS['Personal Injury']).slice(0, 10);
 
+      console.log('[QUICK] Extracted keywords:', suggestedKeywords);
+
       return res.json({
         detectedPractice,
         suggestedKeywords,
@@ -618,7 +687,7 @@ app.post('/api/analyze', async (req, res) => {
     }
 
     const response = {
-      detectedPractice: null, // prática já está no frontend
+      detectedPractice: null,
       suggestedKeywords: keywords,
       keywordScores: firmAnalysis.keywordScores,
       overallScore: firmAnalysis.overallScore,
