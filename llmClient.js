@@ -1,205 +1,125 @@
 // llmClient.js
+const { GoogleGenerativeAI, SchemaType } = require("@google/generative-ai");
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 if (!GEMINI_API_KEY) {
-  console.warn('[Gemini] GEMINI_API_KEY not set. AI summaries will be skipped.');
+  console.warn('[Gemini] GEMINI_API_KEY not set. AI features will fail.');
 }
 
-// Função básica de chamada ao Gemini (sem ferramentas)
-async function callGemini(prompt) {
+// Inicializa o cliente
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+// Configuração do Schema para garantir resposta JSON perfeita
+const ANALYSIS_SCHEMA = {
+  description: "Analysis of a law firm based on search results",
+  type: SchemaType.OBJECT,
+  properties: {
+    practiceArea: {
+      type: SchemaType.STRING,
+      description: "The primary legal practice area (e.g., Personal Injury, Family Law, Real Estate Law)",
+      nullable: false,
+    },
+    keywords: {
+      type: SchemaType.ARRAY,
+      description: "List of 10 high-intent keywords with location included",
+      items: { type: SchemaType.STRING },
+      nullable: false,
+    },
+  },
+  required: ["practiceArea", "keywords"],
+};
+
+// ✅ Função usando SDK oficial com Google Search
+async function extractKeywordsWithGemini(firmName, website, city, state) {
   if (!GEMINI_API_KEY) return null;
 
   try {
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' + GEMINI_API_KEY;
-
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: prompt }]
-          }
-        ]
-      })
+    // Usa gemini-1.5-flash (estável e suporta Google Search)
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      tools: [
+        { googleSearch: {} } // ✅ Google Search Nativo
+      ],
+      generationConfig: {
+        responseMimeType: "application/json", // ✅ Força JSON
+        responseSchema: ANALYSIS_SCHEMA,      // ✅ Garante estrutura
+      }
     });
 
-    if (!resp.ok) {
-      console.error('[Gemini] HTTP error:', resp.status, await resp.text());
-      return null;
-    }
+    const prompt = `
+I need to analyze a law firm named "${firmName}" located in ${city}, ${state}.
+Their website is: ${website}.
 
-    const data = await resp.json();
+Please use Google Search to find:
+1. Their PRIMARY practice area (choose ONE from: Personal Injury, Family Law, Estate Planning, Criminal Defense, Immigration, Business Litigation, Bankruptcy, Employment Law, Real Estate Law, Elder Law)
+2. 10 high-intent keywords potential clients use to find them (ALWAYS include "${city}" in EVERY keyword)
 
-    const text =
-      data?.candidates?.[0]?.content?.parts
-        ?.map((p) => p.text || '')
-        .join(' ')
-        .trim() || '';
+Examples of good keywords:
+- "car accident lawyer in ${city}"
+- "best personal injury attorney ${city}"
+- "real estate lawyer ${city}"
 
-    if (!text) return null;
-    return text;
-  } catch (err) {
-    console.error('[Gemini] Error calling API:', err);
-    return null;
-  }
-}
-
-// ✅ CORRIGIDO: Usar gemini-2.0-flash-exp que suporta Google Search
-async function callGeminiWithSearch(prompt) {
-  if (!GEMINI_API_KEY) return null;
-
-  try {
-    // ✅ Gemini 2.0 Flash Experimental suporta Google Search
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=' + GEMINI_API_KEY;
-
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: prompt }]
-          }
-        ],
-        tools: [
-          {
-            googleSearch: {}  // ✅ Habilita Google Search
-          }
-        ]
-      })
-    });
-
-    if (!resp.ok) {
-      const errorText = await resp.text();
-      console.error('[Gemini Search] HTTP error:', resp.status, errorText);
-      return null;
-    }
-
-    const data = await resp.json();
-
-    const text =
-      data?.candidates?.[0]?.content?.parts
-        ?.map((p) => p.text || '')
-        .join(' ')
-        .trim() || '';
-
-    if (!text) return null;
-    return text;
-  } catch (err) {
-    console.error('[Gemini Search] Error calling API:', err);
-    return null;
-  }
-}
-
-// ✅ Extrair keywords usando Gemini (2 fases como no AI Studio)
-async function extractKeywordsWithGemini(firmName, website, city, state, googleTypes = []) {
-  if (!GEMINI_API_KEY) return null;
-
-  try {
-    // FASE 1: Research com Google Search
-    const researchPrompt = `
-Research the law firm: "${firmName}" at ${website} (located in ${city}, ${state}).
-
-I need to know:
-1. What are their PRIMARY practice areas? (e.g., Personal Injury, Family Law, Real Estate)
-2. What are 10 high-intent keywords that potential clients would use to find them on Google?
-   - Include the city name in keywords (e.g., "car accident lawyer in ${city}")
-   - Focus on specific legal services they offer
-   - Use natural language clients would search
-
-Return detailed information about their practice areas and search terms.
+Based on the search results, return structured JSON.
 `;
 
-    console.log(`[Gemini Research] Researching ${firmName}...`);
-    const researchText = await callGeminiWithSearch(researchPrompt);
+    console.log(`[Gemini SDK] Analyzing ${firmName} with Google Search...`);
 
-    if (!researchText) {
-      console.log('[Gemini Research] No research results, using fallback');
-      return null;
-    }
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
 
-    console.log(`[Gemini Research] Got research data (${researchText.length} chars)`);
+    // Como definimos responseMimeType: "application/json", o text já é JSON válido
+    const data = JSON.parse(text);
 
-    // FASE 2: Estruturar em JSON
-    const structurePrompt = `
-Extract the following from this research text and return ONLY valid JSON (no markdown, no explanation):
+    console.log(`[Gemini SDK] ✅ Success: ${data.practiceArea}, found ${data.keywords?.length} keywords`);
 
-${researchText}
-
-Return a JSON object with this EXACT structure:
-{
-  "practiceArea": "Primary Practice Area Name",
-  "keywords": [
-    "keyword 1",
-    "keyword 2",
-    ...up to 10 keywords
-  ]
-}
-
-Requirements:
-- practiceArea should be ONE of: Personal Injury, Family Law, Estate Planning, Criminal Defense, Immigration, Business Litigation, Bankruptcy, Employment Law, Real Estate Law, Elder Law
-- keywords should be 10 specific search terms clients would use, including city name
-- Return ONLY the JSON object, nothing else
-`;
-
-    console.log('[Gemini Structure] Formatting into JSON...');
-    const structuredText = await callGemini(structurePrompt);
-
-    if (!structuredText) {
-      console.log('[Gemini Structure] Failed to structure data');
-      return null;
-    }
-
-    // Limpar markdown se presente
-    let cleanJson = structuredText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-
-    try {
-      const parsed = JSON.parse(cleanJson);
-      console.log(`[Gemini Success] Extracted: ${parsed.practiceArea}, ${parsed.keywords?.length || 0} keywords`);
-      return parsed;
-    } catch (e) {
-      console.error('[Gemini Parse Error]:', e.message);
-      console.error('Response was:', cleanJson.substring(0, 200));
-      return null;
-    }
+    // Validação básica
+    return {
+      practiceArea: data.practiceArea || "Personal Injury",
+      keywords: (data.keywords || []).slice(0, 10)
+    };
 
   } catch (err) {
-    console.error('[Gemini Extract] Error:', err);
+    console.error('[Gemini SDK] Error:', err.message);
     return null;
   }
 }
 
-// Função de insights existente (mantida)
+// Função de resumo/insights (mantida)
 async function summarizeFirmAnalysis(payload) {
-  const prompt = `
+  if (!GEMINI_API_KEY) return null;
+
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+    const prompt = `
 You are a law firm marketing strategist.
+Based on this JSON analysis of a law firm's visibility:
+${JSON.stringify(payload)}
 
-Given the following JSON about a law firm's AI visibility and website signals,
-write 2–3 short bullet-point insights (max 25 words each, English).
-Focus on opportunities/risks the firm should fix to get more cases.
-
-Return ONLY the bullets, one per line, no numbering.
-
-JSON:
-${JSON.stringify(payload, null, 2)}
+Write exactly 3 short, punchy bullet points (max 20 words each) highlighting opportunities.
+Do not use intro text. Just the bullets.
 `;
 
-  const text = await callGemini(prompt);
-  if (!text) return null;
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
 
-  const lines = text
-    .split('\n')
-    .map((l) => l.replace(/^[-•*\d\.\s]+/, '').trim())
-    .filter((l) => l.length > 0)
-    .slice(0, 3);
+    // Limpeza simples de bullets
+    const lines = text
+      .split('\n')
+      .map(l => l.replace(/^[-•*\d\.\s]+/, '').trim())
+      .filter(l => l.length > 0)
+      .slice(0, 3);
 
-  return lines.length ? lines : [text];
+    return lines.length ? lines : ["Improve SEO content", "Add Schema Markup", "Get more reviews"];
+  } catch (err) {
+    console.error('[Gemini SDK] Summarize Error:', err);
+    return null;
+  }
 }
 
 module.exports = {
-  callGemini,
-  callGeminiWithSearch,
   extractKeywordsWithGemini,
   summarizeFirmAnalysis,
 };
