@@ -45,12 +45,13 @@ async function callGemini(prompt) {
   }
 }
 
-// ✅ NOVA FUNÇÃO: Gemini com Google Search (igual ao AI Studio)
+// ✅ CORRIGIDO: Usar gemini-1.5-flash (sem -latest) para v1beta com tools
 async function callGeminiWithSearch(prompt) {
   if (!GEMINI_API_KEY) return null;
 
   try {
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' + GEMINI_API_KEY;
+    // ✅ CORREÇÃO: gemini-1.5-flash (não gemini-1.5-flash-latest)
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + GEMINI_API_KEY;
 
     const resp = await fetch(url, {
       method: 'POST',
@@ -90,7 +91,7 @@ async function callGeminiWithSearch(prompt) {
   }
 }
 
-// ✅ NOVA FUNÇÃO: Extrair keywords usando Gemini (2 fases como no AI Studio)
+// ✅ Extrair keywords usando Gemini (2 fases como no AI Studio)
 async function extractKeywordsWithGemini(firmName, website, city, state, googleTypes = []) {
   if (!GEMINI_API_KEY) return null;
 
