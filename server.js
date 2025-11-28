@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const { summarizeFirmAnalysis } = require('./llmClient');
 
 const app = express();
 
@@ -568,7 +569,7 @@ app.post('/api/analyze', async (req, res) => {
       }
     }
 
-    // Competitors (mesma lógica que você já tinha, sem mexer muito)
+    // Competitors
     const competitorScores = [];
 
     if (competitors && competitors.length > 0) {
