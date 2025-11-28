@@ -45,13 +45,13 @@ async function callGemini(prompt) {
   }
 }
 
-// ✅ CORRIGIDO: Usar gemini-1.5-flash (sem -latest) para v1beta com tools
+// ✅ CORRIGIDO: Usar gemini-2.0-flash-exp que suporta Google Search
 async function callGeminiWithSearch(prompt) {
   if (!GEMINI_API_KEY) return null;
 
   try {
-    // ✅ CORREÇÃO: gemini-1.5-flash (não gemini-1.5-flash-latest)
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + GEMINI_API_KEY;
+    // ✅ Gemini 2.0 Flash Experimental suporta Google Search
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=' + GEMINI_API_KEY;
 
     const resp = await fetch(url, {
       method: 'POST',
@@ -71,7 +71,8 @@ async function callGeminiWithSearch(prompt) {
     });
 
     if (!resp.ok) {
-      console.error('[Gemini Search] HTTP error:', resp.status, await resp.text());
+      const errorText = await resp.text();
+      console.error('[Gemini Search] HTTP error:', resp.status, errorText);
       return null;
     }
 
