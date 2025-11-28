@@ -223,10 +223,16 @@ function extractKeywordsFromMarkdown(markdown) {
     const text = line.trim().toLowerCase();
 
     // Pula linhas muito curtas ou longas
-    if (text.length < 10 || text.length > 100) continue;
+    if (text.length < 10 || text.length > 60) continue;
 
-    // Pula headers genéricos
-    if (/^#+\s*(home|about|contact|blog|news|team)/i.test(line)) continue;
+    // Pula headers genéricos e CTAs
+    if (/^#+\s*(home|about|contact|blog|news|team|learn more|click here|read more|see how|get started)/i.test(line)) continue;
+
+    // Rejeita frases com CTAs comuns
+    if (/\b(learn more|click here|read more|see how|contact us|call us|get started|find out|discover|to see how|can help|we help|our team|how we|why choose|what we)\b/i.test(text)) continue;
+
+    // Rejeita se começa com palavra errada (verbos, pronomes, etc)
+    if (/^(the|to|we|our|how|what|why|for|with|at|in|and|or|if|when)\b/i.test(text)) continue;
 
     // Checa se contém termo jurídico
     const hasLegalTerm = LEGAL_TERMS.some(term => text.includes(term));
@@ -239,7 +245,14 @@ function extractKeywordsFromMarkdown(markdown) {
       .replace(/[*_`]/g, '') // Remove formatação
       .trim();
 
-    if (cleanText.length < 10 || cleanText.length > 80) continue;
+    // Validação final: deve ser curto e direto
+    if (cleanText.length < 10 || cleanText.length > 50) continue;
+
+    // Rejeita se tem pontuação no meio (indica frase completa)
+    if (/[,;:!?]/.test(cleanText)) continue;
+
+    // Rejeita se começa com verbo ou pronome (verifica novamente no texto limpo)
+    if (/^(the|to|we|our|how|what|why|for|with|learn|see|call|contact)\b/i.test(cleanText)) continue;
 
     keywords.add(cleanText);
 
