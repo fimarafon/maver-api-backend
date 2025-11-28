@@ -1,8 +1,13 @@
 // llmClient.js
 const FIRECRAWL_API_KEY = process.env.FIRECRAWL_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 if (!FIRECRAWL_API_KEY) {
   console.warn('[Firecrawl] FIRECRAWL_API_KEY not set. Will use fallback detection.');
+}
+
+if (!GROQ_API_KEY) {
+  console.warn('[Groq] GROQ_API_KEY not set. Will use fallback detection.');
 }
 
 // Mapa de fallback por área de prática
@@ -117,28 +122,6 @@ const PRACTICE_KEYWORDS = {
   ]
 };
 
-// Lista de termos jurídicos válidos
-const LEGAL_TERMS = [
-  'accident', 'injury', 'personal injury', 'car accident', 'truck accident', 'motorcycle',
-  'wrongful death', 'catastrophic', 'brain injury', 'spinal cord', 'slip and fall',
-  'premises liability', 'product liability', 'medical malpractice', 'nursing home',
-  'dog bite', 'bicycle accident', 'pedestrian', 'uber', 'lyft',
-  'criminal', 'dui', 'dwi', 'drug crime', 'domestic violence', 'assault', 'battery',
-  'theft', 'robbery', 'burglary', 'felony', 'misdemeanor', 'expungement',
-  'divorce', 'custody', 'child support', 'spousal support', 'alimony', 'separation',
-  'prenuptial', 'adoption', 'paternity', 'guardianship',
-  'estate planning', 'wills', 'trusts', 'probate', 'elder law', 'medicaid',
-  'asset protection', 'power of attorney', 'living will', 'conservatorship',
-  'immigration', 'visa', 'green card', 'citizenship', 'deportation', 'asylum',
-  'business', 'corporate', 'contract', 'litigation', 'employment', 'wrongful termination',
-  'discrimination', 'harassment', 'wage', 'whistleblower',
-  'real estate', 'landlord', 'tenant', 'eviction', 'foreclosure', 'property',
-  'bankruptcy', 'chapter 7', 'chapter 13', 'debt relief', 'foreclosure defense',
-  'civil rights', 'police brutality', 'construction', 'workers compensation',
-  'social security', 'disability', 'veterans', 'toxic tort', 'mass tort',
-  'class action', 'securities', 'insurance bad faith', 'wildfire', 'data breach'
-];
-
 // ✅ Scrape com Firecrawl
 async function scrapeWithFirecrawl(url) {
   if (!FIRECRAWL_API_KEY) return null;
@@ -181,144 +164,113 @@ async function scrapeWithFirecrawl(url) {
   }
 }
 
-// ✅ Detecta prática do markdown
-function detectPracticeFromContent(markdown) {
-  const text = markdown.toLowerCase();
+// ✅ Analisa com Groq (Llama 3.1)
+async function analyzeWithGroq(markdown, firmName, city) {
+  if (!GROQ_API_KEY) return null;
 
-  // Contagem de mentions por prática
-  const scores = {
-    'Personal Injury': 0,
-    'Real Estate Law': 0,
-    'Family Law': 0,
-    'Estate Planning': 0,
-    'Criminal Defense': 0,
-    'Business Law': 0,
-    'Immigration': 0,
-    'Employment Law': 0,
-    'Bankruptcy': 0
-  };
+  try {
+    console.log(`[Groq] Analyzing with Llama 3.1...`);
 
-  // Palavras-chave por prática
-  if (text.match(/personal injury|car accident|truck accident|wrongful death|catastrophic injury/gi)) scores['Personal Injury'] += 5;
-  if (text.match(/real estate|property law|landlord|tenant|foreclosure/gi)) scores['Real Estate Law'] += 5;
-  if (text.match(/family law|divorce|custody|child support|spousal support/gi)) scores['Family Law'] += 5;
-  if (text.match(/estate planning|wills|trusts|probate|elder law/gi)) scores['Estate Planning'] += 5;
-  if (text.match(/criminal defense|dui|dwi|drug crime|felony/gi)) scores['Criminal Defense'] += 5;
-  if (text.match(/business law|corporate|commercial litigation|contract/gi)) scores['Business Law'] += 5;
-  if (text.match(/immigration|visa|green card|citizenship|deportation/gi)) scores['Immigration'] += 5;
-  if (text.match(/employment law|wrongful termination|discrimination|harassment/gi)) scores['Employment Law'] += 5;
-  if (text.match(/bankruptcy|chapter 7|chapter 13|debt relief/gi)) scores['Bankruptcy'] += 5;
+    const prompt = `You are a legal marketing expert analyzing a law firm's website.
 
-  // Retorna a prática com maior score
-  const sortedPractices = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-  return sortedPractices[0][1] > 0 ? sortedPractices[0][0] : 'Personal Injury';
-}
+Firm Name: ${firmName}
+Location: ${city}
 
-// ✅ Extrai keywords do markdown
-function extractKeywordsFromMarkdown(markdown) {
-  const keywords = new Set();
-  const lines = markdown.split('\n');
+Website Content (Markdown):
+${markdown.substring(0, 8000)}
 
-  for (const line of lines) {
-    const text = line.trim().toLowerCase();
+Task: Extract ALL legal practice areas and services mentioned on this website.
 
-    // Pula linhas muito curtas ou longas
-    if (text.length < 10 || text.length > 60) continue;
+Instructions:
+1. Identify the PRIMARY practice area (the most prominent one)
+2. List 10 high-intent keywords that potential clients would search for
+3. Include EVERY service mentioned (e.g., "Financial Elder Abuse", "Wildfire Litigation")
+4. ALWAYS include "${city}" in every keyword
+5. Use natural search language (e.g., "car accident lawyer in ${city}")
 
-    // Pula headers genéricos e CTAs
-    if (/^#+\s*(home|about|contact|blog|news|team|learn more|click here|read more|see how|get started)/i.test(line)) continue;
+Return ONLY valid JSON:
+{
+  "practiceArea": "Primary Practice Area",
+  "keywords": [
+    "keyword 1 in ${city}",
+    "keyword 2 in ${city}",
+    ...exactly 10 keywords
+  ]
+}`;
 
-    // Rejeita frases com CTAs comuns
-    if (/\b(learn more|click here|read more|see how|contact us|call us|get started|find out|discover|to see how|can help|we help|our team|how we|why choose|what we)\b/i.test(text)) continue;
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.1-70b-versatile',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a legal marketing expert. Always respond with valid JSON only.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.3,
+        max_tokens: 1000
+      })
+    });
 
-    // Rejeita se começa com palavra errada (verbos, pronomes, etc)
-    if (/^(the|to|we|our|how|what|why|for|with|at|in|and|or|if|when)\b/i.test(text)) continue;
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[Groq] HTTP error:', response.status, errorText);
+      return null;
+    }
 
-    // Checa se contém termo jurídico
-    const hasLegalTerm = LEGAL_TERMS.some(term => text.includes(term));
-    if (!hasLegalTerm) continue;
+    const data = await response.json();
+    const content = data.choices[0]?.message?.content;
 
-    // Extrai texto limpo (remove markdown syntax)
-    let cleanText = line
-      .replace(/^#+\s*/, '') // Remove headers
-      .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Remove links, mantém texto
-      .replace(/[*_`]/g, '') // Remove formatação
-      .trim();
+    if (!content) {
+      console.log('[Groq] No content in response');
+      return null;
+    }
 
-    // Validação final: deve ser curto e direto
-    if (cleanText.length < 10 || cleanText.length > 50) continue;
+    const parsed = JSON.parse(content);
 
-    // Rejeita se tem pontuação no meio (indica frase completa)
-    if (/[,;:!?]/.test(cleanText)) continue;
+    console.log(`[Groq] ✅ Extracted: ${parsed.practiceArea}, ${parsed.keywords?.length || 0} keywords`);
 
-    // Rejeita se começa com verbo ou pronome (verifica novamente no texto limpo)
-    if (/^(the|to|we|our|how|what|why|for|with|learn|see|call|contact)\b/i.test(cleanText)) continue;
+    return {
+      practiceArea: parsed.practiceArea || 'Personal Injury',
+      keywords: (parsed.keywords || []).slice(0, 10)
+    };
 
-    keywords.add(cleanText);
-
-    // Limite de 15 keywords encontradas
-    if (keywords.size >= 15) break;
+  } catch (err) {
+    console.error('[Groq] Error:', err.message);
+    return null;
   }
-
-  return Array.from(keywords);
 }
 
-// ✅ Normaliza keywords para formato padrão
-function normalizeKeywords(rawKeywords, city) {
-  return rawKeywords.slice(0, 10).map(kw => {
-    let normalized = kw;
-
-    // Remove "law firm", "law group", etc
-    normalized = normalized.replace(/\b(law firm|law group|aplc|pc|llp|llc)\b/gi, '').trim();
-
-    // Adiciona "lawyer" ou "attorney" se não tiver
-    if (!/\b(lawyer|attorney)\b/i.test(normalized)) {
-      normalized = normalized + ' lawyer';
-    }
-
-    // Adiciona cidade se não tiver
-    if (!normalized.toLowerCase().includes(city.toLowerCase())) {
-      normalized = `${normalized} in ${city}`;
-    }
-
-    // Title case
-    normalized = normalized
-      .toLowerCase()
-      .split(' ')
-      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-      .join(' ');
-
-    return normalized;
-  });
-}
-
-// ✅ FUNÇÃO PRINCIPAL: Extrai keywords com Firecrawl
+// ✅ FUNÇÃO PRINCIPAL: Firecrawl + Groq
 async function extractKeywordsWithGemini(firmName, website, city, state, googleTypes = []) {
-  console.log(`[Keyword Extractor] Analyzing ${firmName}...`);
+  console.log(`[Keyword Extractor] Analyzing ${firmName} with AI...`);
 
   // Tenta scrape com Firecrawl
   const markdown = await scrapeWithFirecrawl(website);
 
-  if (markdown) {
-    // ✅ Sucesso! Usa conteúdo real do site
-    const practiceArea = detectPracticeFromContent(markdown);
-    const rawKeywords = extractKeywordsFromMarkdown(markdown);
+  if (markdown && GROQ_API_KEY) {
+    // ✅ Usa Groq pra analisar o conteúdo REAL
+    const result = await analyzeWithGroq(markdown, firmName, city);
 
-    if (rawKeywords.length >= 5) {
-      const keywords = normalizeKeywords(rawKeywords, city);
-      console.log(`[Keyword Extractor] ✅ Found ${practiceArea}, ${keywords.length} real keywords from site`);
-
-      return {
-        practiceArea,
-        keywords
-      };
+    if (result && result.keywords && result.keywords.length >= 5) {
+      console.log(`[Keyword Extractor] ✅ SUCCESS with AI analysis`);
+      return result;
     }
   }
 
-  // ❌ Fallback: Firecrawl falhou ou não achou keywords suficientes
+  // ❌ Fallback: Usa detecção simples
   console.log('[Keyword Extractor] ⚠️ Using fallback generic keywords');
 
-  // Detecta prática pelo nome
   const practiceArea = detectPracticeByName(firmName, googleTypes);
   const baseKeywords = PRACTICE_KEYWORDS[practiceArea] || PRACTICE_KEYWORDS['Personal Injury'];
 
