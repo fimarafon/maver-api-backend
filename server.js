@@ -1,6 +1,11 @@
 const express = require('express');
 const cors = require('cors');
-const { summarizeFirmAnalysis, extractKeywordsWithGemini } = require('./llmClient');
+const {
+  summarizeFirmAnalysis,
+  extractKeywordsWithGemini,
+  analyzeAIVisibility,
+  scrapeWithFirecrawl
+} = require('./llmClient');
 
 const app = express();
 
@@ -15,7 +20,7 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Aumentado para suportar markdown cached
 
 const PORT = process.env.PORT || 3001;
 
@@ -624,7 +629,65 @@ app.post('/api/analyze', async (req, res) => {
       });
     }
 
-    // ========= FULL MODE =========
+    // ========= FULL MODE (NEW) =========
+    // Novo modo usando Groq para análise completa de AI Visibility
+    if (mode === 'full') {
+      console.log('[FULL-NEW] Generating comprehensive AI visibility report...');
+
+      const {
+        googlePlaceData,
+        cachedMarkdown,
+        practiceArea,
+        state
+      } = req.body;
+
+      // Se frontend mandou markdown cached, usa. Senão, scrape novamente.
+      let markdown = cachedMarkdown;
+
+      if (!markdown) {
+        console.log('[FULL-NEW] No cached markdown, scraping website...');
+        let normalizedUrl = url.startsWith('http') ? url : `https://${url}`;
+        if (normalizedUrl.endsWith('/')) normalizedUrl = normalizedUrl.slice(0, -1);
+
+        markdown = await scrapeWithFirecrawl(normalizedUrl);
+
+        if (!markdown) {
+          console.log('[FULL-NEW] ⚠️ Firecrawl failed, using minimal markdown');
+          markdown = `Website: ${normalizedUrl}\nFirm: ${firmName}\nLocation: ${city}, ${state || 'CA'}`;
+        }
+      } else {
+        console.log(`[FULL-NEW] Using cached markdown (${markdown.length} chars)`);
+      }
+
+      // Preparar dados
+      const firmData = {
+        name: firmName,
+        city: city,
+        state: state || 'CA',
+        practiceArea: practiceArea || 'Unknown',
+        website: url
+      };
+
+      const placeData = googlePlaceData || {
+        rating: rating || 0,
+        user_ratings_total: reviews || 0
+      };
+
+      // Chamar análise completa
+      const report = await analyzeAIVisibility(markdown, firmData, placeData);
+
+      const response = {
+        ...report,
+        processingTime: Math.round((Date.now() - startTime) / 1000)
+      };
+
+      console.log(`[FULL-NEW] ✅ Complete report generated (Score: ${report.overallScore}/100)`);
+      console.log(`[FULL-NEW] Processing time: ${response.processingTime}s`);
+
+      return res.json(response);
+    }
+
+    // ========= FULL MODE (OLD/LEGACY) =========
     console.log('[FULL] Analyzing main firm...');
     const firmAnalysis = await analyzeFirm(url, keywords, rating, reviews);
 
