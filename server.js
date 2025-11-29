@@ -665,7 +665,8 @@ app.post('/api/analyze', async (req, res) => {
         city: city,
         state: state || 'CA',
         practiceArea: practiceArea || 'Unknown',
-        website: url
+        website: url,
+        competitors: competitors || []  // ← ADICIONA COMPETITORS
       };
 
       const placeData = googlePlaceData || {
